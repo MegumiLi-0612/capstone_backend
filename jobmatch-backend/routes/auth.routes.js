@@ -1,3 +1,4 @@
+router.get('/_test', (req, res) => res.json({ ok: 'auth mounted' }));
 const router = require('express').Router();
 const { body } = require('express-validator');
 const authController = require('../controllers/auth.controller');
@@ -40,5 +41,6 @@ router.post('/login', loginValidation, authController.login);
 router.get('/me', verifyToken, authController.getCurrentUser);
 router.post('/change-password', verifyToken, changePasswordValidation, authController.changePassword);
 router.post('/logout', verifyToken, authController.logout);
+
 
 module.exports = router;
