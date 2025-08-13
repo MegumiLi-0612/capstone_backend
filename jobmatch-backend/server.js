@@ -56,15 +56,15 @@ app.get('/healthz', (req, res) => {
 // ====== API routes ======
 // NOTE: Adjust to your actual router entry. If your project organizes routes differently,
 // change the require path(s) below accordingly.
-try {
+//try {
   // Example: an index router that mounts /auth, /jobs, etc.
   // e.g., ./routes/index.js -> module.exports = router;
-  const apiRouter = require('./routes');
-  app.use('/api/v1', apiRouter);
-} catch (err) {
-  console.warn('[WARN] API router not found or failed to load:', err.message);
+  //const apiRouter = require('./routes');
+  //app.use('/api/v1', apiRouter);
+//} catch (err) {
+  //console.warn('[WARN] API router not found or failed to load:', err.message);
   // You can comment out this block if your project always has ./routes
-}
+//}
 
 // ====== 404 handler ======
 app.use((req, res, next) => {
@@ -110,3 +110,4 @@ async function startServer() {
 startServer();
 
 module.exports = app;
+
