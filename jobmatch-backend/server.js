@@ -1,117 +1,112 @@
+// server.js
+// Express app bootstrap with CORS (for Railway), Helmet, JSON body parsing,
+// healthcheck, error handling, and DB connect-before-listen pattern.
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const dotenv = require('dotenv');
 
-// Load environment variables
 dotenv.config();
+
+const { sequelize } = require('./config/database'); // <- make sure this file exports { sequelize }
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
+// If you use cookies/sessions behind Railway/Proxies
+app.set('trust proxy', 1);
+
+// ====== CORS ======
+// Allow only your production frontend + local dev origins
+const ALLOWED_ORIGINS = [
+  'https://capstonefrontend-production-4fdf.up.railway.app',
+  'http://localhost:5173',
+  'http://localhost:3000'
+];
+
+// Helmet should go first
 app.use(helmet());
 
-// CORS configuration - 允许前端访问
+// CORS must be registered BEFORE routes
 app.use(cors({
-  origin: ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002'],
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  origin: function (origin, callback) {
+    // Allow non-browser tools like curl/Postman with no Origin
+    if (!origin) return callback(null, true);
+    if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+    return callback(new Error('Not allowed by CORS'));
+  },
+  methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization'],
+  credentials: true // set true only if you will use cookies; OK if using JWT in header as well
 }));
 
-app.use(express.json());
+// Respond quickly to preflight
+app.options('*', cors());
+
+// ====== Body parsers ======
+app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Import database connection
-const { sequelize } = require('./config/database');
-
-// Import rate limiter
-const rateLimiter = require('./middleware/rateLimiter');
-
-// Apply rate limiting to auth routes
-app.use('/api/v1/auth', rateLimiter.auth);
-
-// Health check
-app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
-    timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development'
-  });
+// ====== Health check ======
+app.get('/healthz', (req, res) => {
+  res.status(200).json({ ok: true, uptime: process.uptime() });
 });
 
-// Root endpoint
-app.get('/', (req, res) => {
-  res.json({ 
-    message: 'JobMatch Backend API',
-    version: '1.0.0',
-    endpoints: {
-      health: '/health',
-      api: '/api/v1',
-      documentation: '/api/v1/docs'
-    }
-  });
+// ====== API routes ======
+// NOTE: Adjust to your actual router entry. If your project organizes routes differently,
+// change the require path(s) below accordingly.
+try {
+  // Example: an index router that mounts /auth, /jobs, etc.
+  // e.g., ./routes/index.js -> module.exports = router;
+  const apiRouter = require('./routes');
+  app.use('/api/v1', apiRouter);
+} catch (err) {
+  console.warn('[WARN] API router not found or failed to load:', err.message);
+  // You can comment out this block if your project always has ./routes
+}
+
+// ====== 404 handler ======
+app.use((req, res, next) => {
+  res.status(404).json({ message: 'Not Found' });
 });
 
-// API Routes
-app.use('/api/v1/auth', require('./routes/auth.routes'));
-app.use('/api/v1/users', require('./routes/user.routes'));
-app.use('/api/v1/jobs', require('./routes/job.routes'));
-app.use('/api/v1/applications', require('./routes/application.routes'));
-app.use('/api/v1/tasks', require('./routes/task.routes'));
-app.use('/api/v1/skills', require('./routes/skill.routes'));
-app.use('/api/v1/saved-jobs', require('./routes/savedJob.routes'));
+// ====== Error handler (last) ======
+// Keep it last to catch errors from routes/middlewares
+// Do NOT leak internal errors in production.
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err && err.stack ? err.stack : err);
+  const status = err.status || 500;
+  const msg = err.expose ? err.message : (process.env.NODE_ENV === 'development' ? String(err.message || err) : 'Internal Server Error');
+  res.status(status).json({ message: msg });
+});
 
-// Import error handlers
-const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
-
-// 404 handler
-app.use(notFoundHandler);
-
-// Error handling middleware (must be last)
-app.use(errorHandler);
-
-// Database connection and server start
+// ====== Start server after DB is ready ======
 async function startServer() {
   try {
-    // Test database connection
+    // Debug DB config (no password) — comment out if noisy
+    console.log('[DB CONFIG]', {
+      host: process.env.DB_HOST || process.env.MYSQLHOST,
+      port: process.env.DB_PORT || process.env.MYSQLPORT,
+      name: process.env.DB_NAME || process.env.MYSQLDATABASE,
+      user: process.env.DB_USER || process.env.MYSQLUSER
+    });
+
     await sequelize.authenticate();
-    console.log('✅ Database connection established successfully.');
-    
-    // Sync database (use migrations in production)
-    if (process.env.NODE_ENV === 'development') {
-      // 使用 alter: true 来更新表结构而不删除数据
-      await sequelize.sync({ alter: true });
-      console.log('✅ Database synced successfully.');
-    }
-    
-    // Start server
-    const server = app.listen(PORT, () => {
-      console.log('='.repeat(50));
-      console.log(`✅ Server is running on port ${PORT}`);
-      console.log(`📍 API URL: http://localhost:${PORT}`);
-      console.log(`📍 Health check: http://localhost:${PORT}/health`);
-      console.log(`📍 API Base: http://localhost:${PORT}/api/v1`);
-      console.log('='.repeat(50));
-    });
+    console.log('✅ Database connection has been established successfully.');
 
-    // Graceful shutdown
-    process.on('SIGTERM', () => {
-      console.log('SIGTERM signal received: closing HTTP server');
-      server.close(() => {
-        console.log('HTTP server closed');
-        sequelize.close();
-      });
-    });
+    // If you rely on Sequelize sync for schema creation (optional)
+    // await sequelize.sync({ alter: false });
 
+    app.listen(PORT, () => {
+      console.log(`🚀 Server listening on port ${PORT}`);
+    });
   } catch (error) {
     console.error('❌ Unable to start server:', error);
     process.exit(1);
   }
 }
 
-// Start the server
 startServer();
 
 module.exports = app;
