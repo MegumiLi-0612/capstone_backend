@@ -65,7 +65,13 @@ app.get('/healthz', (req, res) => {
   //console.warn('[WARN] API router not found or failed to load:', err.message);
   // You can comment out this block if your project always has ./routes
 //}
-
+try {
+  const apiRouter = require('./routes');
+  app.use('/api/v1', apiRouter);
+  console.log('✅ API routes loaded successfully');
+} catch (err) {
+  console.error('[ERROR] API router failed to load:', err.message);
+}
 // ====== 404 handler ======
 app.use((req, res, next) => {
   res.status(404).json({ message: 'Not Found' });
@@ -110,4 +116,5 @@ async function startServer() {
 startServer();
 
 module.exports = app;
+
 
